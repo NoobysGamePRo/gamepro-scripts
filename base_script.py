@@ -99,3 +99,47 @@ class BaseScript(ABC):
         region = frame[y:y + h, x:x + w]       # BGR slice
         mean = region.mean(axis=(0, 1))          # [B_avg, G_avg, R_avg]
         return float(mean[2]), float(mean[1]), float(mean[0])   # → (R, G, B)
+
+    @staticmethod
+    def count_target_pixels(frame, x: int, y: int, w: int, h: int,
+                            tr: float, tg: float, tb: float,
+                            tolerance: float) -> int:
+        """
+        Count pixels in a region whose colour is within `tolerance` of the
+        target (tr, tg, tb) on EVERY channel simultaneously.
+
+        Use this for detecting a specific colour (e.g. a shiny sparkle) rather
+        than detecting deviation from a baseline.
+
+        tr, tg, tb  — target R, G, B (e.g. picked from a reference screenshot)
+        tolerance   — per-channel max difference allowed to count as a match
+        Returns the number of matching pixels.
+        """
+        import numpy as np
+        region = frame[y:y + h, x:x + w].astype(float)   # BGR slice
+        diff = np.abs(region - [tb, tg, tr])              # convert R,G,B → B,G,R
+        matching = np.all(diff <= tolerance, axis=2)
+        return int(matching.sum())
+
+    @staticmethod
+    def count_matching_pixels(frame, x: int, y: int, w: int, h: int,
+                               br: float, bg: float, bb: float,
+                               tolerance: float) -> int:
+        """
+        Count pixels in a region where ANY channel differs from the baseline
+        (br, bg, bb) by more than tolerance.
+
+        Unlike avg_rgb, this is sensitive to localised changes — a sparkle in
+        one corner registers as many changed pixels even though the average
+        barely moves.
+
+        br, bg, bb  — baseline R, G, B (from avg_rgb() at calibration time)
+        tolerance   — per-channel threshold (same units as avg_rgb)
+        Returns the number of changed pixels.
+        """
+        import numpy as np
+        region = frame[y:y + h, x:x + w].astype(float)   # BGR slice
+        # Compare each channel against baseline (convert R,G,B → B,G,R order)
+        diff = np.abs(region - [bb, bg, br])
+        changed = np.any(diff > tolerance, axis=2)
+        return int(changed.sum())
