@@ -45,6 +45,7 @@ class HordeEncounters(BaseScript):
     # Final A (confirm Sweet Scent) has no delay — LDR detection follows
 
     # ── Flee timing (seconds) ─────────────────────────────────────────────────
+    FLEE_PRE_DELAY      = 1.0   # pause after LDR detection, before fleeing
     FLEE_DOWN_DELAY     = 1.3   # after Down in battle menu
     FLEE_RIGHT_DELAY    = 0.8   # after Right to highlight Run
     FLEE_A_DELAY        = 2.0   # after A to confirm Run
@@ -223,7 +224,8 @@ class HordeEncounters(BaseScript):
     # ── Flee ───────────────────────────────────────────────────────────────────
 
     def _flee(self, controller, stop_event) -> bool:
-        """Down → Right → A to select Run, then wait for overworld to reload."""
+        """Pause → Down → Right → A to select Run, then wait for overworld to reload."""
+        if not self.wait(self.FLEE_PRE_DELAY, stop_event): return False
         controller.press_down()
         if not self.wait(self.FLEE_DOWN_DELAY, stop_event): return False
         controller.press_right()
