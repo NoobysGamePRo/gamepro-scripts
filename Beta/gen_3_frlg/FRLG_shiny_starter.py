@@ -43,25 +43,28 @@ class FrlgShinyStarter(BaseScript):
     DETECT_1_TARGET   = [255.0, 216.0, 95.0]  # R, G, B target colour (right-click reference image)
     DETECT_1_PX_THRESHOLD = 10   # min matching pixels to trigger
 
+    # ── Video panel dimensions (must match VideoPanel constants) ─────────
+    _PANEL_W = 640
+    _PANEL_H = 480
+
     def __init__(self):
         super().__init__()
         self._cal = None
 
     def run(self, controller, frame_grabber, stop_event, log, request_calibration):
         log('Script started.')
-        self._load_cal()
 
-        # ── Screen crop (ask once; saved to cal file for subsequent runs) ──────
-        if not self._cal or 'crop' not in self._cal:
-            crop = request_calibration('Draw a rectangle around the game screen to crop the view.')
-            if stop_event.is_set():
-                return
-            if self._cal is None:
-                self._cal = {}
-            self._cal['crop'] = list(crop)
-            self._save_cal()
-        frame_grabber.set_crop(*self._cal['crop'])
-        log('Screen crop applied.')
+        # ── 4-corner screen calibration (every run) ───────────────────────
+        log('Click the four corners of the 3DS screen in any order.')
+        warp_info = request_calibration(
+            'Click the 4 corners of the 3DS screen', mode='corners'
+        )
+        if stop_event.is_set() or warp_info is None:
+            log('Script stopped.')
+            return
+        log(f'Screen calibrated ({warp_info["out_w"]}×{warp_info["out_h"]} px).')
+
+        self._load_cal()
         count = 0
 
         while not stop_event.is_set():
@@ -140,20 +143,37 @@ class FrlgShinyStarter(BaseScript):
             # Step 19: [A]
             controller.press_a()
 
-            # Step 20: Detect
-            if not self._cal or "region" not in self._cal:
-                self._do_calibrate(request_calibration, frame_grabber, stop_event)
+            # Step 20: Detect — calibrate region on first run
+            if not self._cal or 'region' not in self._cal:
+                log('Draw a box around the shiny star area.')
+                region_canvas = request_calibration(
+                    'Draw a box around the shiny star area.'
+                )
                 if stop_event.is_set(): break
+                region = self._canvas_to_warp(region_canvas, warp_info)
+                if self._cal is None:
+                    self._cal = {}
+                self._cal['region'] = list(region)
+                self._save_cal()
+                log('Detection region saved.')
+
             x, y, w, h = self._cal['region']
+
+            # Flash the detection box for 1 second so the user can see it
+            cx, cy, cw, ch = self._warp_to_canvas((x, y, w, h), warp_info)
+            frame_grabber.set_detect_overlay(cx, cy, cw, ch)
+            if not self.wait(1.0, stop_event):
+                frame_grabber.clear_detect_overlay()
+                break
+            frame_grabber.clear_detect_overlay()
+
             tr, tg, tb = self.DETECT_1_TARGET
             tol = self.DETECT_1_TOLERANCE
-            frame_grabber.set_detect_overlay(x, y, w, h)
             result = self._poll_target_color(
-                frame_grabber, stop_event,
+                frame_grabber, stop_event, warp_info,
                 x, y, w, h, tr, tg, tb, tol,
                 self.DETECT_1_PX_THRESHOLD,
                 self.DETECT_1_WINDOW, self.DETECT_1_INTERVAL, log)
-            frame_grabber.clear_detect_overlay()
             if stop_event.is_set(): break
             if result is not None:
                 log(f'DETECTED! {result} px match target colour (threshold: {self.DETECT_1_PX_THRESHOLD}).')
@@ -162,8 +182,6 @@ class FrlgShinyStarter(BaseScript):
 
             count += 1
             log(f'Attempt {count} complete.')
-
-        frame_grabber.clear_crop()
 
         log('Script stopped.')
 
@@ -187,29 +205,36 @@ class FrlgShinyStarter(BaseScript):
         with open(self._cal_path(), 'w') as f:
             json.dump(self._cal, f)
 
-    def _do_calibrate(self, request_calibration, frame_grabber, stop_event):
-        """Called the first time the detect step is reached."""
-        region = request_calibration(
-            "Draw a box around the area to watch for changes.")
-        if stop_event.is_set():
-            return
-        x, y, w, h = region
-        frame = frame_grabber.get_latest_frame()
-        if frame is None:
-            return
-        r, g, b = self.avg_rgb(frame, x, y, w, h)
-        if self._cal is None:
-            self._cal = {}
-        self._cal.update({'region': [x, y, w, h], 'baseline': [r, g, b], 'tolerance': 25})
-        self._save_cal()
+    def _canvas_to_warp(self, canvas_rect, warp_info):
+        """Convert a rectangle in canvas pixels to warped-frame pixels."""
+        cx, cy, cw, ch = canvas_rect
+        scale = min(self._PANEL_W / warp_info['out_w'],
+                    self._PANEL_H / warp_info['out_h'])
+        x_off = (self._PANEL_W - warp_info['out_w'] * scale) / 2
+        y_off = (self._PANEL_H - warp_info['out_h'] * scale) / 2
+        x = max(0, int((cx - x_off) / scale))
+        y = max(0, int((cy - y_off) / scale))
+        w = max(1, int(cw / scale))
+        h = max(1, int(ch / scale))
+        return x, y, w, h
 
-    def _poll_target_color(self, frame_grabber, stop_event,
-                          x, y, w, h, tr, tg, tb, tolerance,
-                          px_threshold, window, interval, log=None):
-        """Target colour detection — fires when >= px_threshold pixels
-        match the target colour (tr, tg, tb) within tolerance.
-        Use for detecting a specific sparkle/highlight colour.
-        """
+    def _warp_to_canvas(self, warp_rect, warp_info):
+        """Convert a rectangle in warped-frame pixels to canvas pixels."""
+        x, y, w, h = warp_rect
+        scale = min(self._PANEL_W / warp_info['out_w'],
+                    self._PANEL_H / warp_info['out_h'])
+        x_off = (self._PANEL_W - warp_info['out_w'] * scale) / 2
+        y_off = (self._PANEL_H - warp_info['out_h'] * scale) / 2
+        cx = int(x * scale + x_off)
+        cy = int(y * scale + y_off)
+        cw = max(1, int(w * scale))
+        ch = max(1, int(h * scale))
+        return cx, cy, cw, ch
+
+    def _poll_target_color(self, frame_grabber, stop_event, warp_info,
+                           x, y, w, h, tr, tg, tb, tolerance,
+                           px_threshold, window, interval, log=None):
+        """Target colour detection on the perspective-corrected frame."""
         deadline = time.time() + window
         next_log = time.time() + 2.0
         while time.time() < deadline:
@@ -217,6 +242,7 @@ class FrlgShinyStarter(BaseScript):
                 return None
             frame = frame_grabber.get_latest_frame()
             if frame is not None:
+                frame = self.warp_frame(frame, warp_info)
                 n = self.count_target_pixels(
                     frame, x, y, w, h, tr, tg, tb, tolerance)
                 if log and time.time() >= next_log:
@@ -226,6 +252,7 @@ class FrlgShinyStarter(BaseScript):
                     time.sleep(interval * 2)
                     frame2 = frame_grabber.get_latest_frame()
                     if frame2 is not None:
+                        frame2 = self.warp_frame(frame2, warp_info)
                         n2 = self.count_target_pixels(
                             frame2, x, y, w, h, tr, tg, tb, tolerance)
                         if n2 >= px_threshold:
