@@ -17,10 +17,13 @@ Bag:    BICYCLE registered to Y.  Keep free space in the ITEMS pocket (Rare
         For SHINY_ACTION = 'catch': POKé / GREAT / ULTRA BALLs in the bag
         (the MASTER BALL is never used).
 
-Start:  on the bicycle, in the Route 1 tall grass patch directly below the
-        first ledge south of Viridian City (tree line on your left).
+Start:  ON THE BICYCLE, in the Route 1 tall grass patch directly below the
+        first ledge south of Viridian City (tree line on your left).  The script
+        does not try to detect the bike: it trusts that you start on it, and gets
+        back on by itself after healing.
 
-Loop:   pace in grass -> battle -> shiny check -> KO with move 1/2/3
+Loop:   ride across the grass (one long hold each way, wall to wall) -> battle
+        -> shiny check -> KO with move 1/2/3
         every CHECK_EVERY battles: open party, TAKE any picked-up items
         when moves 1-3 are out of PP: FLY to Viridian, heal, walk back.
 
@@ -63,15 +66,16 @@ class FrlgPickupFarm(BaseScript):
 
     # ── Timing constants (seconds) ──────────────────────────────────────
     PRESS_GAP       = 0.30    # gap between menu presses (back-to-back presses get dropped)
-    PACE_LEFT       = 0.70    # on foot: slightly longer than right so we drift into the tree line
-    PACE_RIGHT      = 0.60
-    BIKE_LEFT       = 0.35    # on the bike (~5 tiles per 0.3 s)
-    BIKE_RIGHT      = 0.30
-    MAX_PACES       = 200     # no encounter after this many paces -> lost, stop
+    STROKE_BIKE     = 1.8     # one hold across the ~11-tile grass patch (wall to wall: the tree
+    STROKE_FOOT     = 3.4     # line on the left, trees on the right). Pushing into the trees at
+                              # the end is harmless and saves servo presses.
+    MAX_STROKES     = 80      # no encounter after this many crossings -> lost, stop
+    ARROW_TIMEOUT   = 4.0     # battle text with no red arrow for this long -> press A once anyway
     INTRO_DEFAULT   = 2.6     # normal time from battle fade-in to "Wild X appeared!" text
     SHINY_EXTRA     = 0.35    # intro this much slower than usual = shiny sparkle
                               # (normal intros vary by < 0.1 s)
     STUCK_TIMEOUT   = 15.0    # unknown screen for this long inside a battle -> stop
+    BAG_FULL_ROUNDS = 3       # stop only if items can't be taken this many checks in a row
     NURSE_PRESSES   = 8       # A presses after the greeting to "We hope to see you again!"
     NURSE_GAP       = 1.5
     FLY_LAND_WAIT   = 8.0     # fly animation + landing outside the Pokémon Centre
@@ -98,6 +102,10 @@ class FrlgPickupFarm(BaseScript):
     R_POCKET_R   = (66, 62, 14, 16)    #   POKé BALLS pocket (the last one) has only the left
     R_YESNO_EDGE = (182, 78, 10, 28)   # green left border of the battle YES/NO box
     R_LINE1_MID  = (90, 122, 40, 12)   # middle of battle text line 1
+    R_TEXTBOX    = (4, 118, 232, 38)   # battle text box: the red "next" arrow appears in here
+    # ▶ cursor positions (x, y of the triangle's top-left), menu laid out 2 x 2
+    CUR_BMENU = [(130, 124), (185, 124), (130, 142), (185, 142)]   # FIGHT BAG / POKéMON RUN
+    CUR_MOVES = [(9, 124), (82, 124), (9, 142), (82, 142)]         # move 1 2 / 3 4
 
     _BTN = {'a': 'press_a', 'b': 'press_b', 'x': 'press_x', 'y': 'press_y',
             'e': 'press_up', 'd': 'press_down', 's': 'press_left', 'f': 'press_right',
@@ -124,14 +132,19 @@ class FrlgPickupFarm(BaseScript):
         self.t0 = time.time()
 
         self.out_of_pp = False
+        self.fallbacks = 0                # menu cursor unreadable -> old fixed presses (reported)
         failed_heals = 0
         try:
+            for _ in range(4):            # close a menu left open (e.g. Stop during an item check)
+                f = self._frame()
+                if self._state(f) != 'other' or not (self._is_party(f) or self._start_menu(f)):
+                    break
+                self._press('b', 1.4)
             if self._state() != 'other' and not self._fight():   # started mid-battle
                 return
             if self.HEAL_FIRST and not self._heal_cycle():
                 return
-            if self.USE_BIKE:
-                self._check_bike()
+            self.bag_full_rounds = 0
             while not stop_event.is_set():
                 if self.out_of_pp:
                     failed_heals += 1
@@ -224,6 +237,10 @@ class FrlgPickupFarm(BaseScript):
         p, c = self._rgb(f, self.R_PARTYBG), self._rgb(f, self.R_CHOOSE)
         return p[0] < 90 and p[1] > 140 and p[2] > 150 and min(c) > 190
 
+    def _start_menu(self, f):
+        """The START menu's white panel on the right (the overworld there is grass / trees)."""
+        return min(self._rgb(f, (182, 10, 48, 95))) > 185 and self._menu_row(f) is not None
+
     def _menu_row(self, f):
         g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
         x = self.MENU_ARROW_X
@@ -253,19 +270,21 @@ class FrlgPickupFarm(BaseScript):
         r, g, b = self._rgb(f, self.R_DIALOG)
         return min(r, g, b) > 190 and b > 230
 
-    # ── Overworld: pace in grass until a battle starts ──────────────────
+    # ── Overworld: ride across the grass until a battle starts ──────────
     def _find_battle(self):
-        left, right = ((self.BIKE_LEFT, self.BIKE_RIGHT) if self.USE_BIKE
-                       else (self.PACE_LEFT, self.PACE_RIGHT))
-        for _ in range(50):              # let any menu fade finish first
+        """One long hold per crossing (left / right), released as soon as a battle starts.
+        The patch is walled by trees on both sides, so overshooting just pushes into them -
+        far fewer servo presses than short paces."""
+        stroke = self.STROKE_BIKE if self.USE_BIKE else self.STROKE_FOOT
+        for _ in range(50):              # let any menu / battle fade finish first
             if self._state() == 'other':
                 break
             self.wait(0.1, self.stop)
-        for i in range(self.MAX_PACES):
-            d, t = ('4', left) if i % 2 == 0 else ('6', right)
+        for i in range(self.MAX_STROKES):
+            d = '6' if i % 2 == 0 else '4'
             # watch the screen while moving so the battle fade is caught from its start
             getattr(self.c, self._BTN[d])()
-            end, hit = time.time() + t, False
+            end, hit = time.time() + stroke, False
             while time.time() < end and not self.stop.is_set():
                 if self._state() in ('black', 'btext'):
                     hit = True
@@ -273,29 +292,41 @@ class FrlgPickupFarm(BaseScript):
             self.c.release_all()
             if hit:
                 return True
-            if not self.wait(0.05, self.stop):
+            if not self.wait(0.1, self.stop):
                 return False
-        self._fail('No wild encounter after %d paces - not in the grass?' % self.MAX_PACES)
+        self._fail('No wild encounter after %d crossings - not in the grass?' % self.MAX_STROKES)
         return False
 
-    def _check_bike(self):
-        """Get on the bike if we aren't already (on the bike a short pace scrolls ~5 tiles)."""
-        for d, back in (('6', '4'), ('4', '6')):        # try right; if blocked, left
-            g0 = cv2.cvtColor(self._frame(), cv2.COLOR_BGR2GRAY).astype(np.float32)
-            self._hold(d, 0.3)
-            self.wait(0.4, self.stop)
-            f = self._frame()
-            if self._state(f) != 'other':
-                return                                    # walked into a battle - check later
-            g1 = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype(np.float32)
-            dx = abs(cv2.phaseCorrelate(g0[:60], g1[:60])[0][0])
-            self._hold(back, 0.3)
-            self.wait(0.3, self.stop)
-            if dx >= 8:                                   # moved (not against a tree)
-                if dx < 50:
-                    self.log('Getting on the bike.')
-                    self._press('y', 0.8)
-                return
+    # ── Battle screen cues ──────────────────────────────────────────────
+    def _arrow(self, f):
+        """The red "next" arrow at the end of battle text = the game is waiting for A.
+        (Measured: 23-30 red px when shown, 0 otherwise - messages without it advance by
+        themselves.)"""
+        x, y, w, h = self.R_TEXTBOX
+        p = f[y:y + h, x:x + w].astype(int)
+        b, g, r = p[:, :, 0], p[:, :, 1], p[:, :, 2]
+        return int(((r > 150) & (r > g + 70) & (r > b + 50)).sum()) >= 10
+
+    @staticmethod
+    def _cursor(f, spots):
+        """Index of the ▶ cursor among the 2 x 2 menu spots, or None if unclear."""
+        g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
+        # the triangle's own columns only - the first letter of a label starts ~6 px right of it
+        # (with x-1..x+6 the "P" of PURSUIT put 6 px into spot 0 and the TRI ATTACK cursor (21 px)
+        # missed a 3x rule by one)
+        ink = [int((g[y - 1:y + 9, x - 2:x + 4] < 90).sum()) for x, y in spots]
+        best = int(np.argmax(ink))
+        others = sorted(ink)[-2]
+        return best if ink[best] >= 8 and ink[best] >= 2 * others + 4 else None
+
+    def _goto(self, cur, target):
+        """D-pad presses from menu spot cur to target (2 x 2 grid)."""
+        seq = ''
+        if cur % 2 != target % 2:
+            seq += 'f' if target % 2 else 's'
+        if cur // 2 != target // 2:
+            seq += 'd' if target // 2 else 'e'
+        return self._press(seq) if seq else True
 
     # ── Shiny check: time the battle intro ──────────────────────────────
     def _ink(self, f):
@@ -438,36 +469,75 @@ class FrlgPickupFarm(BaseScript):
         return 'stuck'
 
     # ── Battle: KO the wild Pokémon, wait for the fade back out ─────────
+    def _move_spots(self):
+        """MOVES (cursor presses from the top-left) -> menu spot numbers 0..3."""
+        return [('f' in m) + 2 * ('d' in m) for m in self.MOVES]
+
+    def _read_cursor(self, spots, tries=4):
+        """The ▶ position, looking again while a menu is still sliding in."""
+        for i in range(tries):
+            cur = self._cursor(self._frame(), spots)
+            if cur is not None:
+                return cur
+            self.wait(0.15, self.stop)
+        self.fallbacks += 1
+        return None
+
+    def _choose(self, spots, target):
+        """Put the ▶ on spot `target` (reading where it is first); True once it is there."""
+        for _ in range(3):
+            cur = self._read_cursor(spots)
+            if cur is None:
+                return False
+            if cur == target:
+                return True
+            self._goto(cur, target)
+        return False
+
     def _fight(self):
-        fought, last_ok = False, time.time()
+        fought, last_ok, text_since = False, time.time(), None
         while not self.stop.is_set():
-            st = self._state()
+            f = self._frame()
+            st = self._state(f)
             if st != 'other':
                 last_ok = time.time()
+            if st != 'btext':
+                text_since = None
             if st == 'btext':
-                f = self._frame()
                 if self._yes_no(f):                      # lead levelled up and wants a 5th move
                     if self._long_line1(f):              # "Delete a move to make room for X?"
                         self.log('Lead wants to learn a new move - not learning it.')
                         self._press('b', 1.0)            # NO
                     else:                                # "Stop learning X?"
                         self._press('a', 1.0)            # YES
-                else:
+                    text_since = None
+                elif self._arrow(f):                     # waiting for A
                     self._press('a', 0.35)
+                    text_since = None
+                    # the camera shows the game ~0.5 s late: wait for this arrow to go before
+                    # looking for the next one, or the same message gets a second A
+                    end = time.time() + 1.5
+                    while time.time() < end and not self.stop.is_set():
+                        g = self._frame()
+                        if not self._arrow(g) or self._state(g) != 'btext':
+                            break
+                        self.wait(0.1, self.stop)
+                else:                                    # still printing / advances by itself
+                    text_since = text_since or time.time()
+                    if time.time() - text_since > self.ARROW_TIMEOUT:
+                        self._press('a', 0.35)           # arrow missed (glare?) - nudge once
+                        text_since = None
             elif st == 'bmenu':
-                if self.out_of_pp:
-                    self._press('dfa')                   # RUN (bottom-right)
-                    fought = True
-                else:
-                    self._press('esa')                   # FIGHT (top-left)
-                    self.wait(0.5, self.stop)
+                target = 3 if self.out_of_pp else 0      # RUN / FIGHT
+                if self._choose(self.CUR_BMENU, target):
+                    self._press('a')
+                else:                                    # cursor unreadable: the old way
+                    self._press('dfa' if self.out_of_pp else 'esa')
+                fought = fought or self.out_of_pp
+                self.wait(0.5, self.stop)
             elif st == 'mmenu':
-                for nav in self.MOVES:
-                    self._press('es' + nav)
-                    if not self._pp_empty(self._frame()):
-                        self._press('a')
-                        fought = True
-                        break
+                if self._pick_move():
+                    fought = True
                 else:
                     self.log('Lead is out of PP - running away to heal.')
                     self.out_of_pp = True
@@ -479,7 +549,31 @@ class FrlgPickupFarm(BaseScript):
             elif st == 'other' and time.time() - last_ok > self.STUCK_TIMEOUT:
                 self._fail('Unexpected screen in battle (level up / new move?).')
                 return False
-            self.wait(0.3, self.stop)
+            self.wait(0.15, self.stop)
+        return False
+
+    def _pick_move(self):
+        """Use the highlighted move if it is one of MOVES and has PP (the game remembers the
+        last move, so usually this is a single A); otherwise step to the next usable one."""
+        allowed = self._move_spots()
+        cur = self._read_cursor(self.CUR_MOVES)
+        if cur is None:                                  # unreadable: the old way
+            for nav in self.MOVES:
+                self._press('es' + nav)
+                if not self._pp_empty(self._frame()):
+                    self._press('a')
+                    return True
+            return False
+        order = ([cur] if cur in allowed else []) + [m for m in allowed if m != cur]
+        for m in order:
+            if m != cur:
+                if not self._choose(self.CUR_MOVES, m):
+                    continue
+                cur = m
+            self.wait(0.2, self.stop)
+            if not self._pp_empty(self._frame()):
+                self._press('a')
+                return True
         return False
 
     # ── Party menu ──────────────────────────────────────────────────────
@@ -525,30 +619,50 @@ class FrlgPickupFarm(BaseScript):
         if not self._open_party():
             return False
         held = self._held(self._frame())
+        full, pos = False, None               # pos = party slot the cursor is on (1-6)
         for k, has in enumerate(held):
             if not has or self.stop.is_set():
                 continue
-            # slot k+2: left -> lead, down k+1 times, A, ITEM, TAKE
-            self._press('s' + 'd' * (k + 1))
+            # slot k+2: the first time left -> lead, then down k+1; after a TAKE the cursor is
+            # still on that Meowth, so just carry on down to the next one
+            if pos is None:
+                self._press('s' + 'd' * (k + 1))
+            else:
+                self._press('d' * (k + 2 - pos))
+            pos = k + 2
             self._press('a', 0.8)
             self._press('dd')
             self._press('a', 0.8)
             self._press('d')
             before = self._text_crop()
             self._press('a', 1.0)
-            name = self._read_item(before)
+            try:
+                name = self._read_item(before)
+            except Exception as e:               # a reading problem must never stop the farm
+                self.log(f'  (could not read the item name: {e})')
+                name, self.took = 'unknown item', None
             if self.stop.is_set():               # Stop pressed mid-TAKE - nothing to report
                 return False
             self._press('a', 1.0)
-            # no "Received the" and still holding it -> "The BAG is full"
-            # (the icon check alone misreads the selected slot when the room lighting changes)
-            if not self.took and self._held(self._frame())[k]:
-                self._fail(f'Could not take the item from Meowth {k + 1} - the bag looks full. '
-                           'Make room in the ITEMS pocket and restart.')
-                return False
+            # no "Received the ..." -> nothing was taken: "The BAG is full", or this Meowth wasn't
+            # holding anything after all. (Don't re-check the icon here: the selected Meowth's
+            # party icon bounces into the item-icon spot and reads as "still holding".) A full
+            # bag keeps happening, so only several checks in a row stop the script.
+            if self.took is False:
+                self.log(f'  Nothing taken from Meowth {k + 1} (BAG full, or no item after all) '
+                         '- carrying on.')
+                full = True
+                continue
             self.items[name] = self.items.get(name, 0) + 1
             self.log(f'Battle {self.battles}: Meowth {k + 1} picked up {name}')
         self._close_party()
+        # a full bag stops new pickups (a Meowth holding an item can't pick up another), so stop
+        # only when it keeps happening rather than on one doubtful read
+        self.bag_full_rounds = self.bag_full_rounds + 1 if full else 0
+        if self.bag_full_rounds >= self.BAG_FULL_ROUNDS:
+            self._fail('Items could not be taken %d checks in a row - the BAG looks full. '
+                       'Make room in the ITEMS pocket and restart.' % self.bag_full_rounds)
+            return False
         return True
 
     # ── Item name recognition (template match on the message line) ──────
@@ -576,6 +690,7 @@ class FrlgPickupFarm(BaseScript):
     def _load_templates(self):
         """Templates are 'ITEM NAME.png'; extra samples as 'ITEM NAME_2.png' etc."""
         out = []
+        self.prefix = None                       # "Received the" (from any template)
         for fn in os.listdir(self.tpl_dir):
             if fn.lower().endswith('.png') and not fn.startswith(('unknown', 'stuck')):
                 t = cv2.imread(os.path.join(self.tpl_dir, fn), cv2.IMREAD_GRAYSCALE)
@@ -606,6 +721,9 @@ class FrlgPickupFarm(BaseScript):
                 self.wait(0.4, self.stop)
             crops = self._text_crop(both=True)
             # "Received the ..." = taken; "The BAG is full." scores well below 0.6
+            if self.prefix is None:              # no templates installed: can't tell
+                self.took, crop = None, crops[0]
+                break
             pre = [float(cv2.matchTemplate(self._prefix_part(c), self.prefix,
                                            cv2.TM_CCOEFF_NORMED).max()) for c in crops]
             self.took = max(pre) >= 0.6
@@ -702,6 +820,7 @@ class FrlgPickupFarm(BaseScript):
         items = ', '.join(f'{n} x{c}' for n, c in sorted(self.items.items())) or 'none yet'
         intro = (f' | intro {min(self.intros):.2f}-{max(self.intros):.2f} s'
                  if self.intros else '')
+        fb = f' | cursor fallbacks {self.fallbacks}' if getattr(self, 'fallbacks', 0) else ''
         self.log(f'== {self.battles} battles in {mins:.0f} min | '
                  f'Rare Candy: {self.items.get("RARE CANDY", 0)} | shinies: {self.shinies}'
-                 f'{intro} | {items}')
+                 f'{intro}{fb} | {items}')
