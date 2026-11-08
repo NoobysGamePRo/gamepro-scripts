@@ -9,7 +9,7 @@ Farms **Rare Candies**, Nuggets, PP Ups, TMs and berries with **Pickup Meowths**
 1. Rides the bicycle back and forth across a patch of tall grass. Each crossing is one long press, from the tree line to the trees on the other side.
 2. Checks every wild Pokémon for a **shiny**, then knocks it out with your lead's moves 1-3.
 3. Every 3 battles, opens the party and takes any items the Meowths picked up. Each item's name is read and counted in the log.
-4. When the lead runs out of PP, it uses **FLY** to reach Viridian City, heals at the Pokémon Centre, rides back to the grass and carries on.
+4. When a move runs out of PP it switches to the next one, and doesn't check the empty move again until it has healed. When all three are empty, it uses **FLY** to reach Viridian City, heals at the Pokémon Centre, rides back to the grass and carries on.
 
 Pickup only works after a battle you **win**, so the lead knocks out everything. In testing it averaged about **2 battles a minute**, and a Rare Candy every 20-80 battles.
 
@@ -90,6 +90,7 @@ Press **Stop** at any time. To carry on, put the player back in the starting spo
 
 ## Troubleshooting
 
+- **"Not in the tall grass":** the script checks the grass around the player after every crossing. If the walk back from the Pokémon Centre stops just above the ledge, it steps down to jump it and carries on; this message means that didn't work. Go back to the starting spot.
 - **"No wild encounter after 80 crossings":** the player isn't in the grass. Go back to the starting spot.
 - **"Nothing taken from Meowth N (BAG full, or no item after all)":** usually harmless. If it keeps happening, the ITEMS pocket is full. The script stops after 3 checks in a row like that. Make room and run again.
 - **"Could not open the party screen" / "Could not talk to the nurse":** a button press didn't register. Check the GamePRo calibration (D-pad, A, X), then run again.

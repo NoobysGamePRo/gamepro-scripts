@@ -60,8 +60,8 @@ class FrlgPickupFarm(BaseScript):
 
     # ── Lead Pokémon moves: cursor presses from top-left of the move menu ──
     # Move menu layout:  1 2 / 3 4.  Slot 4 (FLY) is never used in battle.
-    # Each move is used until its PP shows red (0); when all are red we RUN
-    # and go to heal.
+    # Each move is used until its PP shows red (0); it is then skipped until the next heal.
+    # When all are red we RUN and go to heal.
     MOVES = ['', 'f', 'd']    # moves 1, 2, 3
 
     # ── Timing constants (seconds) ──────────────────────────────────────
@@ -70,6 +70,7 @@ class FrlgPickupFarm(BaseScript):
     STROKE_FOOT     = 3.4     # line on the left, trees on the right). Pushing into the trees at
                               # the end is harmless and saves servo presses.
     MAX_STROKES     = 80      # no encounter after this many crossings -> lost, stop
+    LEDGE_HOP       = 0.35    # one step down: jumps the ledge if the walk back stopped above it
     ARROW_TIMEOUT   = 4.0     # battle text with no red arrow for this long -> press A once anyway
     INTRO_DEFAULT   = 2.6     # normal time from battle fade-in to "Wild X appeared!" text
     SHINY_EXTRA     = 0.35    # intro this much slower than usual = shiny sparkle
@@ -103,6 +104,7 @@ class FrlgPickupFarm(BaseScript):
     R_YESNO_EDGE = (182, 78, 10, 28)   # green left border of the battle YES/NO box
     R_LINE1_MID  = (90, 122, 40, 12)   # middle of battle text line 1
     R_TEXTBOX    = (4, 118, 232, 38)   # battle text box: the red "next" arrow appears in here
+    R_PLAYER     = (112, 72, 16, 16)   # the player's tile: tall grass covers the lower half
     # ▶ cursor positions (x, y of the triangle's top-left), menu laid out 2 x 2
     CUR_BMENU = [(130, 124), (185, 124), (130, 142), (185, 142)]   # FIGHT BAG / POKéMON RUN
     CUR_MOVES = [(9, 124), (82, 124), (9, 142), (82, 142)]         # move 1 2 / 3 4
@@ -132,6 +134,7 @@ class FrlgPickupFarm(BaseScript):
         self.t0 = time.time()
 
         self.out_of_pp = False
+        self.empty_moves = set()          # move spots seen at 0 PP since the last heal
         self.fallbacks = 0                # menu cursor unreadable -> old fixed presses (reported)
         failed_heals = 0
         try:
@@ -255,6 +258,30 @@ class FrlgPickupFarm(BaseScript):
         red = (r[:, :, 2] > 150) & (r[:, :, 1] < 110) & (r[:, :, 0] < 120)
         return int(red.sum()) > 10
 
+    def _in_grass(self, f):
+        """True if the player is standing in tall grass: its dark green leaves are drawn over the
+        lower half of the sprite (40-50 leaf pixels in the tile; 0-1 on the path or ledge)."""
+        x, y, w, h = self.R_PLAYER
+        p = f[y:y + h, x:x + w].astype(int)
+        b, g, r = p[:, :, 0], p[:, :, 1], p[:, :, 2]
+        return int(((g > r + 30) & (g > b - 10) & (g < 200)).sum()) >= 20
+
+    def _get_into_grass(self, tries=3):
+        """Step down until the player is in the grass. The walk back from the Pokémon Centre
+        sometimes stops one tile short, above the ledge; one step down jumps it."""
+        for i in range(tries + 1):
+            self.wait(0.6, self.stop)                # camera lag + ledge-jump animation
+            if self.stop.is_set():
+                return False
+            if self._state() != 'other':             # a battle started - we're in the grass
+                return True
+            if self._in_grass(self._frame()):
+                return True
+            if i < tries:
+                self.log('  not in the grass yet - stepping down')
+                self._hold('2', self.LEDGE_HOP)
+        return False
+
     def _yes_no(self, f):
         """YES/NO box above the right of the battle text (green left border)."""
         x, y, w, h = self.R_YESNO_EDGE
@@ -280,18 +307,28 @@ class FrlgPickupFarm(BaseScript):
             if self._state() == 'other':
                 break
             self.wait(0.1, self.stop)
+        out, hopped = 0, False
         for i in range(self.MAX_STROKES):
             d = '6' if i % 2 == 0 else '4'
             # watch the screen while moving so the battle fade is caught from its start
             getattr(self.c, self._BTN[d])()
-            end, hit = time.time() + stroke, False
+            end, hit, f = time.time() + stroke, False, None
             while time.time() < end and not self.stop.is_set():
-                if self._state() in ('black', 'btext'):
+                f = self._frame()
+                if self._state(f) in ('black', 'btext'):
                     hit = True
                     break
             self.c.release_all()
             if hit:
                 return True
+            # every tile of the patch is tall grass, so a whole crossing out of it means the
+            # player is on the path above the ledge (or somewhere else entirely)
+            out = 0 if f is None or self._in_grass(f) else out + 1
+            if out >= 2:
+                if hopped or not self._get_into_grass(1):
+                    self._fail('Not in the tall grass - put the player back in the starting spot.')
+                    return False
+                out, hopped = 0, True
             if not self.wait(0.1, self.stop):
                 return False
         self._fail('No wild encounter after %d crossings - not in the grass?' % self.MAX_STROKES)
@@ -528,6 +565,9 @@ class FrlgPickupFarm(BaseScript):
                         self._press('a', 0.35)           # arrow missed (glare?) - nudge once
                         text_since = None
             elif st == 'bmenu':
+                if not self.out_of_pp and not self._moves_left():
+                    self.log('Lead is out of PP - running away to heal.')
+                    self.out_of_pp = True
                 target = 3 if self.out_of_pp else 0      # RUN / FIGHT
                 if self._choose(self.CUR_BMENU, target):
                     self._press('a')
@@ -552,17 +592,25 @@ class FrlgPickupFarm(BaseScript):
             self.wait(0.15, self.stop)
         return False
 
+    def _moves_left(self):
+        """Move spots from MOVES not yet seen at 0 PP since the last heal."""
+        return [m for m in self._move_spots() if m not in self.empty_moves]
+
     def _pick_move(self):
         """Use the highlighted move if it is one of MOVES and has PP (the game remembers the
-        last move, so usually this is a single A); otherwise step to the next usable one."""
-        allowed = self._move_spots()
+        last move, so usually this is a single A); otherwise step to the next usable one.
+        A move seen at 0 PP is remembered and not looked at again until the next heal."""
+        allowed = self._moves_left()
         cur = self._read_cursor(self.CUR_MOVES)
         if cur is None:                                  # unreadable: the old way
-            for nav in self.MOVES:
+            for nav, m in zip(self.MOVES, self._move_spots()):
+                if m in self.empty_moves:
+                    continue
                 self._press('es' + nav)
                 if not self._pp_empty(self._frame()):
                     self._press('a')
                     return True
+                self.empty_moves.add(m)
             return False
         order = ([cur] if cur in allowed else []) + [m for m in allowed if m != cur]
         for m in order:
@@ -574,6 +622,8 @@ class FrlgPickupFarm(BaseScript):
             if not self._pp_empty(self._frame()):
                 self._press('a')
                 return True
+            self.empty_moves.add(m)
+            self.log(f'  move {m + 1} is out of PP - skipping it until the next heal')
         return False
 
     # ── Party menu ──────────────────────────────────────────────────────
@@ -785,11 +835,15 @@ class FrlgPickupFarm(BaseScript):
         for ch, t in self.WALK_TO_GRASS:
             if not self._hold(ch, t) or not self.wait(0.3, self.stop):
                 return False
+        if self._state() == 'other' and not self._get_into_grass():
+            self._fail('Could not get back into the grass after healing.')
+            return False
         if self._state() != 'other':
             self._fight()                # walked into a battle on the way (no shiny check)
         elif self.USE_BIKE:
             self._press('y', 0.8)        # always on foot after the Pokémon Centre
         self.out_of_pp = False
+        self.empty_moves = set()
         self.log('Healed - back in the grass.')
         return not self.stop.is_set()
 
