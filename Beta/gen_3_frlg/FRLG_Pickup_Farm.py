@@ -14,7 +14,7 @@ Party:  slot 1 = lead that one-shots Route 1 wilds.  Moves 1-3: single-turn
 
 Bag:    BICYCLE registered to Y.  Keep free space in the ITEMS pocket (Rare
         Candy / PP Up / Nugget each need a slot unless you already have some).
-        For SHINY_ACTION = 'catch': POKé / GREAT / ULTRA BALLs in the bag
+        If shinies are set to Catch: POKé / GREAT / ULTRA BALLs in the bag
         (the MASTER BALL is never used).
 
 Start:  ON THE BICYCLE, in the Route 1 tall grass patch directly below the
@@ -29,7 +29,7 @@ Loop:   ride across the grass (one long hold each way, wall to wall) -> battle
 
 Shiny check: a shiny's sparkle animation delays the "Wild X appeared!" text.
 The script times every battle intro and treats one that is SHINY_EXTRA seconds
-slower than usual as a shiny, then does SHINY_ACTION.
+slower than usual as a shiny, then does what the settings window says (stop / catch / knock out).
 
 Pickup only triggers after a battle you WIN (fleeing does not count in FRLG).
 """
@@ -52,6 +52,16 @@ class FrlgPickupFarm(BaseScript):
     SHINY_ACTION = 'stop'     # 'stop'  = stop at the battle menu so you can catch it yourself
                               # 'catch' = throw balls until caught, then keep farming
                               # 'ko'    = knock it out like any other Pokémon
+                              # (the default - GamePRo v1.9+ asks in the settings window on Run)
+    _SHINY_CHOICES = {'Stop so I can catch it myself': 'stop',
+                      'Catch it with balls, then carry on': 'catch',
+                      'Knock it out and carry on': 'ko'}
+    SETTINGS = [
+        {'key': 'shiny_action', 'type': 'choice', 'label': 'When a shiny appears',
+         'choices': list(_SHINY_CHOICES), 'default': 'Stop so I can catch it myself',
+         'help': 'Catch throws ULTRA, then GREAT, then POKé BALLs (never the MASTER BALL) and '
+                 'stops at the battle menu if it runs out. A caught shiny goes to the PC.'},
+    ]
     BALLS = ['ULTRA BALL', 'GREAT BALL', 'POKé BALL']   # catch order; MASTER BALL is never used
     USE_BIKE     = True       # ride the bicycle (registered to Y) in the grass
     PICKUP_SLOTS = 5          # Meowths in party slots 2..6
@@ -105,6 +115,7 @@ class FrlgPickupFarm(BaseScript):
     R_LINE1_MID  = (90, 122, 40, 12)   # middle of battle text line 1
     R_TEXTBOX    = (4, 118, 232, 38)   # battle text box: the red "next" arrow appears in here
     R_PLAYER     = (112, 72, 16, 16)   # the player's tile: tall grass covers the lower half
+    R_FOE_LV     = (70, 19, 42, 11)    # "Lv3" + right border of the wild Pokémon's HP box
     # ▶ cursor positions (x, y of the triangle's top-left), menu laid out 2 x 2
     CUR_BMENU = [(130, 124), (185, 124), (130, 142), (185, 142)]   # FIGHT BAG / POKéMON RUN
     CUR_MOVES = [(9, 124), (82, 124), (9, 142), (82, 142)]         # move 1 2 / 3 4
@@ -117,7 +128,10 @@ class FrlgPickupFarm(BaseScript):
     # ════════════════════════════════════════════════════════════════════
     def run(self, controller, frame_grabber, stop_event, log, request_calibration):
         self.c, self.fg, self.stop, self.log = controller, frame_grabber, stop_event, log
-        log('FRLG Pickup Farm started.')
+        chosen = (getattr(self, 'settings', None) or {}).get('shiny_action')
+        self.shiny_action = self._SHINY_CHOICES.get(chosen, self.SHINY_ACTION)
+        log('FRLG Pickup Farm started (shinies: %s).' % {'stop': 'stop', 'catch': 'catch',
+                                                         'ko': 'knock out'}[self.shiny_action])
         log('Click the 4 corners of the GAME picture (inside the black border).')
         self.warp = request_calibration('Click the 4 corners of the GBA game picture', mode='corners')
         if stop_event.is_set() or self.warp is None:
@@ -135,6 +149,7 @@ class FrlgPickupFarm(BaseScript):
 
         self.out_of_pp = False
         self.empty_moves = set()          # move spots seen at 0 PP since the last heal
+        self.fleeing = False              # running from the roaming legendary
         self.fallbacks = 0                # menu cursor unreadable -> old fixed presses (reported)
         failed_heals = 0
         try:
@@ -171,8 +186,8 @@ class FrlgPickupFarm(BaseScript):
                         break
                 elif not self._fight():
                     break
-                if self.out_of_pp:
-                    continue                  # ran away - no Pickup, go heal
+                if self.out_of_pp or self.fleeing:
+                    continue                  # ran away - no Pickup (and go heal if out of PP)
                 failed_heals = 0
                 self.battles += 1
                 if self.battles % 10 == 0:
@@ -265,6 +280,20 @@ class FrlgPickupFarm(BaseScript):
         p = f[y:y + h, x:x + w].astype(int)
         b, g, r = p[:, :, 0], p[:, :, 1], p[:, :, 2]
         return int(((g > r + 30) & (g > b - 10) & (g < 200)).sum()) >= 20
+
+    def _two_digit_level(self, f):
+        """True if the wild Pokémon's level has two digits. Route 1 only has Lv2-5 Pokémon, so this
+        is the roaming legendary dog (Entei / Raikou / Suicune, Lv50). Measured from the HP box's
+        right border (so calibration error doesn't matter): a one-digit "Lv3" leaves the gap before
+        the border and the space left of "Lv" empty; a second digit fills one of them."""
+        x, y, w, h = self.R_FOE_LV
+        g = cv2.cvtColor(f[y:y + h, x:x + w], cv2.COLOR_BGR2GRAY).astype(int)
+        cols = (g < np.percentile(g, 80) - 45).sum(0) >= 2
+        edge = [i for i in range(w - 12, w) if cols[i]]
+        if not edge:
+            return False
+        b = edge[-1] - 1                                 # left column of the 2 px border
+        return int(cols[b - 4:b - 1].sum()) >= 2 or int(cols[b - 23:b - 18].sum()) >= 2
 
     def _get_into_grass(self, tries=3):
         """Step down until the player is in the grass. The walk back from the Pokémon Centre
@@ -398,9 +427,9 @@ class FrlgPickupFarm(BaseScript):
     def _handle_shiny(self):
         self.shinies += 1
         self._save_shot('shiny')
-        action = self.SHINY_ACTION
+        action = self.shiny_action
         if action == 'ko':
-            self.log('SHINY_ACTION is "ko" - knocking it out.')
+            self.log('Shiny setting is "knock it out" - knocking it out.')
             return self._fight()
         if action == 'catch':
             res = self._catch()
@@ -533,6 +562,7 @@ class FrlgPickupFarm(BaseScript):
 
     def _fight(self):
         fought, last_ok, text_since = False, time.time(), None
+        self.fleeing, lv_checked = False, False
         while not self.stop.is_set():
             f = self._frame()
             st = self._state(f)
@@ -565,15 +595,24 @@ class FrlgPickupFarm(BaseScript):
                         self._press('a', 0.35)           # arrow missed (glare?) - nudge once
                         text_since = None
             elif st == 'bmenu':
+                if not lv_checked:
+                    self.wait(0.3, self.stop)            # let the HP box finish sliding in
+                    lv_checked = True
+                    if self._two_digit_level(self._frame()) and self._two_digit_level(self._frame()):
+                        self.log(f'Lv50 roaming legendary (screenshot: {self._save_shot("roamer")})'
+                                 ' - running away.')
+                        self.fleeing = True
+                        continue
                 if not self.out_of_pp and not self._moves_left():
                     self.log('Lead is out of PP - running away to heal.')
                     self.out_of_pp = True
-                target = 3 if self.out_of_pp else 0      # RUN / FIGHT
+                run = self.out_of_pp or self.fleeing
+                target = 3 if run else 0                 # RUN / FIGHT
                 if self._choose(self.CUR_BMENU, target):
                     self._press('a')
                 else:                                    # cursor unreadable: the old way
-                    self._press('dfa' if self.out_of_pp else 'esa')
-                fought = fought or self.out_of_pp
+                    self._press('dfa' if run else 'esa')
+                fought = fought or run                   # "Can't escape!" comes back here
                 self.wait(0.5, self.stop)
             elif st == 'mmenu':
                 if self._pick_move():

@@ -56,7 +56,8 @@ Fly to Viridian City and go south onto Route 1. Jump down the first ledge and st
 
 1. Connect the GamePRo and pick your camera.
 2. Select **FRLG Pickup Farm** and press **Run Script**.
-3. Click the **4 corners of the game picture**, inside the black border.
+3. In the settings window, choose what to do **when a shiny appears** (see below) and press OK.
+4. Click the **4 corners of the game picture**, inside the black border.
 
 ![Click the corners of the game picture itself](_readme_images/frlg_pickup_farm/corners.png)
 
@@ -66,7 +67,15 @@ The log shows each item as it is taken, and a summary every 10 battles, e.g.:
 
 ## Shinies
 
-Shiny Pokémon play a sparkle animation before "Wild X appeared!". The script times every battle intro and treats one that is noticeably slower as a shiny. By default it **stops at the battle menu** so you can catch the shiny yourself.
+Shiny Pokémon play a sparkle animation before "Wild X appeared!". The script times every battle intro and treats one that is noticeably slower as a shiny, saves a `shiny_….png` screenshot in the `pickup_items` folder, then does what you chose in the settings window:
+
+- **Stop so I can catch it myself** (default): stops at the battle menu.
+- **Catch it with balls, then carry on:** throws ULTRA, then GREAT, then POKé BALLs (the MASTER BALL is never used) until it's caught. With a full party, the shiny goes to the PC. If you run out of balls, it stops at the battle menu instead.
+- **Knock it out and carry on:** treats it like any other Pokémon.
+
+## The roaming legendary dog
+
+After the National Dex, Entei, Raikou or Suicune (Lv50) roams Kanto and can turn up on Route 1. The script spots its two-digit level in the battle box and **runs away** instead of attacking it, so you can catch it yourself later. The log says "Lv50 roaming legendary" and a screenshot named `roamer_….png` is saved in the `pickup_items` folder.
 
 ## Items it doesn't recognise
 
@@ -80,7 +89,6 @@ To teach it, rename that file to the item's name, e.g. `RARE CANDY_3.png`. Use c
 
 These are at the top of `FRLG_Pickup_Farm.py`, for anyone happy to edit the script:
 
-- `SHINY_ACTION`: `'stop'` (default), `'catch'` (throws Ultra, then Great, then Poké Balls; the Master Ball is never used) or `'ko'`.
 - `CHECK_EVERY`: battles between item checks (default 3).
 - `MOVES`: which moves to use, if you don't want all of moves 1-3.
 
