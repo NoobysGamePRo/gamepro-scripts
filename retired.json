@@ -134,6 +134,9 @@
   "Development/__init__.py": [
    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   ],
+  "colour_detection.py": [
+   "66e1c9959325dd6c4fde86635efedc00ec8ea694e438029d2915c794ab466fe6"
+  ],
   "gen_2_vc/__init__.py": [
    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   ],
@@ -420,6 +423,10 @@
   "lets_go/lets_go_shiny_mewtwo.py": [
    "9e8f99d0a45a4877eeb51681cbfea4c87b669b5a9ba86bad655e62523cc48506",
    "a68a59acf55a0ac18400dc9b1beb409ddc9b6304760609c7ac0796cbbd26925e"
+  ],
+  "light_sensor_test.py": [
+   "621d722641305eacadc19ab046c56625590650e978225fdaef7fb5ea8c87c78b",
+   "b7dd4633c3f2b7e7b389f19483bf5bc8a883b88ef9051db7f84612c63ec850d6"
   ]
  },
  "moved_data": [
