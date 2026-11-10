@@ -2,8 +2,6 @@
 
 Farms **Rare Candies**, Nuggets, PP Ups, TMs and berries with **Pickup Meowths** on Route 1, just south of Viridian City, in Pokémon FireRed / LeafGreen (Nintendo Switch Online GBA app).
 
-> Beta: this script is still being tested. Please report anything odd at noobysgamepro.com.
-
 ## What it does
 
 1. Rides the bicycle back and forth across a patch of tall grass. Each crossing is one long press, from the tree line to the trees on the other side.
