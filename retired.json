@@ -131,6 +131,11 @@
   "Beta/gen_3_frlg/pickup_items/WATMEL BERRY.png": [
    "4456122ca5e410488460a9b63cc39278706db503ba6dd4c4847f52162bfecc98"
   ],
+  "Beta/gen_6_oras_xy/horde_encounters.py": [
+   "244c157dcd1807753d66e8eb720ac95fa514cf2581c4e8449ce104d3f3e1286e",
+   "8cd82f8f2f16ff682e2a91fc14d49c3a28844983ac68739082e05039ab1516dc",
+   "9bf93ea4f8dfbc0ff22d17f2454e426b535eec7e48d4a19ee8d319343f3c7be1"
+  ],
   "Development/__init__.py": [
    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   ],

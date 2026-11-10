@@ -170,8 +170,8 @@ class CrystalGameCorner(BaseScript):
     def _check_party(self, controller, frame_grabber, stop_event, log,
                      rx, ry, rw, rh, br, bg, bb, tol, sr_count) -> bool:
         """Open party menu and check the prize Pokemon for shiny."""
-        # Start → Down → A to open Pokemon party
-        controller.press_start()
+        # Menu (X, as in the other Crystal VC scripts) → Down → A to open Pokemon party
+        controller.press_x()
         if not self.wait(self.MENU_START_DELAY, stop_event): return False
         controller.press_down()
         if not self.wait(self.MENU_DOWN_DELAY, stop_event): return False
@@ -223,7 +223,7 @@ class CrystalGameCorner(BaseScript):
         if not self._receive_prize(controller, stop_event):
             return None
 
-        controller.press_start()
+        controller.press_x()               # open the menu
         if not self.wait(self.MENU_START_DELAY, stop_event): return None
         controller.press_down()
         if not self.wait(self.MENU_DOWN_DELAY, stop_event): return None
