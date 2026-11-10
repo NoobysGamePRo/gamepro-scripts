@@ -120,11 +120,12 @@ class ScarletVioletEggBreeding(BaseScript):
             if frame is not None:
                 region = frame[y:y + h, x:x + w]
                 yellow = (
-                    (region[:, :, 0] > self.YELLOW_R_MIN) &
+                    (region[:, :, 2] > self.YELLOW_R_MIN) &      # frames are BGR
                     (region[:, :, 1] > self.YELLOW_G_MIN) &
-                    (region[:, :, 2] < self.YELLOW_B_MAX)
+                    (region[:, :, 0] < self.YELLOW_B_MAX)
                 )
                 if yellow.sum() > self.YELLOW_PIXEL_THRESHOLD:
                     return True
-            time.sleep(self.EGG_CHECK_INTERVAL)
+            if not self.wait(self.EGG_CHECK_INTERVAL, stop_event):
+                return False
         return False
