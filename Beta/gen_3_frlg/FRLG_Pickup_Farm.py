@@ -34,6 +34,7 @@ slower than usual as a shiny, then does what the settings window says (stop / ca
 Pickup only triggers after a battle you WIN (fleeing does not count in FRLG).
 """
 
+import base64
 import os
 import time
 
@@ -115,7 +116,11 @@ class FrlgPickupFarm(BaseScript):
     R_LINE1_MID  = (90, 122, 40, 12)   # middle of battle text line 1
     R_TEXTBOX    = (4, 118, 232, 38)   # battle text box: the red "next" arrow appears in here
     R_PLAYER     = (112, 72, 16, 16)   # the player's tile: tall grass covers the lower half
-    R_FOE_LV     = (70, 19, 42, 11)    # "Lv3" + right border of the wild Pokémon's HP box
+    # Wild Pokémon's HP box at 480x320: "Lv" symbol and the yellow "HP" label (grey PNG, base64).
+    # The level is right-aligned, so a two-digit level puts "Lv" ~12 px closer to "HP".
+    LV_GAP_MAX = 88                    # Lv-to-HP distance: Lv2-5 measure 90-99, Entei Lv50 80-88
+    _TPL_LV = 'iVBORw0KGgoAAAANSUhEUgAAABMAAAASCAAAAACcZ7q1AAABA0lEQVQYGQ3B21KDMBQF0L1JgNDaKhn0Qf//vyiDOnamoTeG5kKOXYs9ICCEICDEE3tIStSKBEABIewlL551rQkCAgLsGa73/LKrNJ6EQOYBYXKxtUbjiWBeeUBwLtiu1qCQQI4cJEynYDuj8ESKJA4S3SlaazTWBCVrAQ4IkwutrXX2QYosrDggusm/dUbFeU6FpGLPAcmdfNuZIp2dr2TmJ8ccnfO2q1VyLujVyxfHnC7HR9uZYj1Pi8ZDPjgiXP4ur++mltv9LoTacEQ8//xu7L7R63KNqqpqjki34y+a/a7SaY5SbkuOTMvtGlE2ppEQU7lV/MYavc+gKivmmFVV/APmpp8hrb+obwAAAABJRU5ErkJggg=='
+    _TPL_HP = 'iVBORw0KGgoAAAANSUhEUgAAACAAAAAQCAAAAABSayKFAAABmElEQVQoFRXBPXLTQBgG4O/dXe2uJEuWI+zAxAwpcymYSQ9HYIZT0HEASi5ARUHHKaAysWUp0mr/PobnwS/ORAAjCwKYASIQEQgkiAg/Y0hMYIZEAkiAASYgQxELwvdpCZIor1oWHKKQGiAmwSkTF4XE11NQRufRlbXKs9O1VvRfGkdX7LsKn0/UttZfoq3LcAm6blSKRJSG81y/3m3w6bk69KW/hKIt09Nq2oaCC6LANHB3sBofQn/XV3GMclOmYVFdxX5eZYl5tdtWAY/08rir85Kl0XFwalvBzV5Y4bhrLQW8E4dXNxvyUVgZh1VuK6yLJ01eHrYme7yVL25vauGDMiKMHk1Dbl4BXsx9Z8njUfb7ztLCShfp6kXVpWWaI5KrHvaliHjvdrc7G5+9tTaOq2yaMJ3Ps8i5v9/3WuDjxe7bMl2DsSVfvaoq+ff0tDBBH4/H2uDLb1cZk0ZJVtOcYaw4X4eZBIry7k27wbc/UxKK1yR0QT5TYZJzzytBsmoPXYMfk1ujREqiYIoESeCYMoEJyhj9D8tgy13eG5ijAAAAAElFTkSuQmCC'
     # ▶ cursor positions (x, y of the triangle's top-left), menu laid out 2 x 2
     CUR_BMENU = [(130, 124), (185, 124), (130, 142), (185, 142)]   # FIGHT BAG / POKéMON RUN
     CUR_MOVES = [(9, 124), (82, 124), (9, 142), (82, 142)]         # move 1 2 / 3 4
@@ -281,19 +286,38 @@ class FrlgPickupFarm(BaseScript):
         b, g, r = p[:, :, 0], p[:, :, 1], p[:, :, 2]
         return int(((g > r + 30) & (g > b - 10) & (g < 200)).sum()) >= 20
 
-    def _two_digit_level(self, f):
+    @staticmethod
+    def _tpl(b64):
+        return cv2.imdecode(np.frombuffer(base64.b64decode(b64), np.uint8), cv2.IMREAD_GRAYSCALE)
+
+    def _lv_gap(self, f):
+        """Distance from the wild Pokémon's "HP" label to its "Lv" symbol (480x320 frame), or
+        None if either can't be found. Both are found by template matching, so a few pixels of
+        corner-click error or blur move them together and don't change the distance."""
+        if not hasattr(self, '_t_lv'):
+            self._t_lv, self._t_hp = self._tpl(self._TPL_LV), self._tpl(self._TPL_HP)
+        g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
+        found = []
+        for t, (x0, y0, x1, y1) in ((self._t_lv, (120, 25, 215, 75)), (self._t_hp, (50, 45, 140, 95))):
+            r = cv2.matchTemplate(g[y0:y1, x0:x1], t, cv2.TM_CCOEFF_NORMED)
+            _, score, _, (x, y) = cv2.minMaxLoc(r)
+            if score < 0.6:
+                return None
+            found.append((x + x0, y + y0))
+        (lx, ly), (hx, hy) = found
+        return lx - hx if -28 <= ly - hy <= -12 else None
+
+    def _two_digit_level(self):
         """True if the wild Pokémon's level has two digits. Route 1 only has Lv2-5 Pokémon, so this
-        is the roaming legendary dog (Entei / Raikou / Suicune, Lv50). Measured from the HP box's
-        right border (so calibration error doesn't matter): a one-digit "Lv3" leaves the gap before
-        the border and the space left of "Lv" empty; a second digit fills one of them."""
-        x, y, w, h = self.R_FOE_LV
-        g = cv2.cvtColor(f[y:y + h, x:x + w], cv2.COLOR_BGR2GRAY).astype(int)
-        cols = (g < np.percentile(g, 80) - 45).sum(0) >= 2
-        edge = [i for i in range(w - 12, w) if cols[i]]
-        if not edge:
-            return False
-        b = edge[-1] - 1                                 # left column of the 2 px border
-        return int(cols[b - 4:b - 1].sum()) >= 2 or int(cols[b - 23:b - 18].sum()) >= 2
+        is the roaming legendary dog (Entei / Raikou / Suicune, Lv50). Middle of 3 frames."""
+        gaps = []
+        for _ in range(3):
+            d = self._lv_gap(self._frame(480, 320))
+            if d is None:
+                return False                             # box not readable - just fight
+            gaps.append(d)
+            self.wait(0.1, self.stop)
+        return sorted(gaps)[1] <= self.LV_GAP_MAX
 
     def _get_into_grass(self, tries=3):
         """Step down until the player is in the grass. The walk back from the Pokémon Centre
@@ -598,7 +622,7 @@ class FrlgPickupFarm(BaseScript):
                 if not lv_checked:
                     self.wait(0.3, self.stop)            # let the HP box finish sliding in
                     lv_checked = True
-                    if self._two_digit_level(self._frame()) and self._two_digit_level(self._frame()):
+                    if self._two_digit_level():
                         self.log(f'Lv50 roaming legendary (screenshot: {self._save_shot("roamer")})'
                                  ' - running away.')
                         self.fleeing = True
