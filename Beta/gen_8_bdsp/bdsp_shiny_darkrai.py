@@ -9,7 +9,7 @@ Ported from Shiny_Darkrai_1.0.cpp.
 
 How it works:
   Same pattern as BDSP - Shiny Legendary:
-  1. Soft-resets and waits SOFT_RESET_WAIT s.
+  1. Restarts the game (HOME, close software, relaunch); waits SOFT_RESET_WAIT s.
   2. A × NUM_MENU_A (title/continue menus).
   3. Waits OVERWORLD_WAIT s for world load.
   4. Presses A to interact with Darkrai; waits for battle blackout.
@@ -45,7 +45,11 @@ class BDSPShinyDarkrai(BaseScript):
     DESCRIPTION = "Soft-resets for shiny Darkrai (Brilliant Diamond/Pearl)."
 
     # ── Timing (seconds) ─────────────────────────────────────────────────────
-    SOFT_RESET_WAIT    = 25.0   # Switch reload
+    SOFT_RESET_WAIT    = 25.0   # game boot after relaunch
+    SR_HOME_WAIT       = 1.5    # after HOME
+    SR_X_WAIT          = 1.5    # after X (close software)
+    SR_CLOSE_WAIT      = 3.0    # after A (confirm close)
+    SR_LAUNCH_WAIT     = 2.0    # after A (launch game)
     MENU_DELAY         = 2.0    # between title A presses
     NUM_MENU_A         = 3      # A presses to reach overworld
     OVERWORLD_WAIT     = 3.0    # extra wait after menus
@@ -86,8 +90,7 @@ class BDSPShinyDarkrai(BaseScript):
 
         sr_count = 0
 
-        controller.soft_reset()
-        if not self.wait(self.SOFT_RESET_WAIT, stop_event):
+        if not self._restart_game(controller, stop_event):
             return
 
         while not stop_event.is_set():
@@ -115,8 +118,7 @@ class BDSPShinyDarkrai(BaseScript):
 
             if not blackout:
                 log("Blackout not detected — retrying.")
-                controller.soft_reset()
-                if not self.wait(self.SOFT_RESET_WAIT, stop_event): break
+                if not self._restart_game(controller, stop_event): break
                 continue
 
             if not self.wait(self.BATTLE_LOAD_WAIT, stop_event): break
@@ -154,10 +156,24 @@ class BDSPShinyDarkrai(BaseScript):
 
             sr_count += 1
             log(f"No shiny. Soft reset #{sr_count}...")
-            controller.soft_reset()
-            if not self.wait(self.SOFT_RESET_WAIT, stop_event): break
+            if not self._restart_game(controller, stop_event): break
 
         log("BDSP - Shiny Darkrai stopped.")
+
+    def _restart_game(self, controller, stop_event) -> bool:
+        """Close and relaunch the game: HOME -> X (close software) -> A (confirm)
+        -> A (launch) -> A (user), then wait SOFT_RESET_WAIT for it to boot.
+        On Switch, SR1 is only the HOME button, so it can't soft-reset by itself."""
+        controller.soft_reset()                       # 'S' = HOME on Switch
+        if not self.wait(self.SR_HOME_WAIT, stop_event): return False
+        controller.press_x()                          # close software
+        if not self.wait(self.SR_X_WAIT, stop_event): return False
+        controller.press_a()                          # confirm close
+        if not self.wait(self.SR_CLOSE_WAIT, stop_event): return False
+        controller.press_a()                          # launch the game
+        if not self.wait(self.SR_LAUNCH_WAIT, stop_event): return False
+        controller.press_a()                          # select user (if asked)
+        return self.wait(self.SOFT_RESET_WAIT, stop_event)
 
     def _wait_for_blackout(self, frame_grabber, stop_event, timeout: float) -> bool:
         deadline = time.time() + timeout
