@@ -29,7 +29,11 @@ class BDSPShinyStarter(BaseScript):
     STARTER = 'turtwig'
 
     # ── Timing (seconds) ─────────────────────────────────────────────────────
-    SOFT_RESET_WAIT   = 25.0   # Switch game reload (BDSP is slower than SwSh)
+    SOFT_RESET_WAIT   = 25.0   # game boot after relaunch
+    SR_HOME_WAIT       = 1.5    # after HOME
+    SR_X_WAIT          = 1.5    # after X (close software)
+    SR_CLOSE_WAIT      = 3.0    # after A (confirm close)
+    SR_LAUNCH_WAIT     = 2.0    # after A (launch game)
     MENU_DELAY        = 2.0    # between title A presses
     NUM_MENU_A        = 3      # A presses to reach overworld
     OVERWORLD_WAIT    = 3.0    # extra wait after last menu A (world loads)
@@ -66,10 +70,9 @@ class BDSPShinyStarter(BaseScript):
 
         while not stop_event.is_set():
             # ── Soft reset ────────────────────────────────────────────────
-            controller.soft_reset_z()
             sr_count += 1
             log(f"SR #{sr_count} — reloading game...")
-            if not self.wait(self.SOFT_RESET_WAIT, stop_event):
+            if not self._restart_game(controller, stop_event):
                 break
 
             # ── Navigate past title / continue screen ─────────────────────
@@ -144,7 +147,11 @@ class BDSPShinyStarter(BaseScript):
             elapsed_ms = (time.time() - t_start) * 1000
             log(f"SR #{sr_count}: text appeared in {elapsed_ms:.0f} ms")
 
-            if elapsed_ms > self.SHINY_DELAY_MS or not text_appeared:
+            if not text_appeared:
+                # The C++ original treats this as a failed attempt, not a shiny
+                log(f"SR #{sr_count}: battle text not seen — resetting")
+                continue
+            if elapsed_ms > self.SHINY_DELAY_MS:
                 log(f"*** SHINY {self.STARTER.title()} DETECTED! "
                     f"Time: {elapsed_ms:.0f} ms | SR #{sr_count} ***")
                 log(f"Total soft resets: {sr_count}")
@@ -154,6 +161,21 @@ class BDSPShinyStarter(BaseScript):
                 log(f"SR #{sr_count}: not shiny — resetting")
 
         log("BDSP Shiny Starter stopped.")
+
+    def _restart_game(self, controller, stop_event) -> bool:
+        """Close and relaunch the game: HOME -> X (close software) -> A (confirm)
+        -> A (launch) -> A (user), then wait SOFT_RESET_WAIT for it to boot.
+        On Switch, SR1 is only the HOME button, so it can't soft-reset by itself."""
+        controller.soft_reset()                       # 'S' = HOME on Switch
+        if not self.wait(self.SR_HOME_WAIT, stop_event): return False
+        controller.press_x()                          # close software
+        if not self.wait(self.SR_X_WAIT, stop_event): return False
+        controller.press_a()                          # confirm close
+        if not self.wait(self.SR_CLOSE_WAIT, stop_event): return False
+        controller.press_a()                          # launch the game
+        if not self.wait(self.SR_LAUNCH_WAIT, stop_event): return False
+        controller.press_a()                          # select user (if asked)
+        return self.wait(self.SOFT_RESET_WAIT, stop_event)
 
     def _wait_for_blackout(self, frame_grabber, stop_event) -> bool:
         """Returns True when the majority of the screen is very dark (battle fade)."""

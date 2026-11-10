@@ -26,7 +26,11 @@ class SwordShieldStationaryEncounter(BaseScript):
     DESCRIPTION = "Soft-resets a stationary overworld Pokemon and detects shininess (SwSh)."
 
     # ── Timing (seconds) ─────────────────────────────────────────────────────
-    SOFT_RESET_WAIT = 15.0    # Switch game reload is slow
+    SOFT_RESET_WAIT = 15.0    # game boot after relaunch
+    SR_HOME_WAIT       = 1.5    # after HOME
+    SR_X_WAIT          = 1.5    # after X (close software)
+    SR_CLOSE_WAIT      = 3.0    # after A (confirm close)
+    SR_LAUNCH_WAIT     = 2.0    # after A (launch game)
     MENU_DELAY      = 1.5     # between menu A presses
     NUM_MENU_A      = 3       # A presses to get past title
     WALK_DELAY      = 1.5     # hold Up to approach Pokemon
@@ -59,10 +63,9 @@ class SwordShieldStationaryEncounter(BaseScript):
 
         while not stop_event.is_set():
             # ── Soft reset (Home → close → reopen) ────────────────────────
-            controller.soft_reset_z()
             sr_count += 1
             log(f"SR #{sr_count} — reloading game...")
-            if not self.wait(self.SOFT_RESET_WAIT, stop_event):
+            if not self._restart_game(controller, stop_event):
                 break
 
             # ── Navigate title / continue ──────────────────────────────────
@@ -103,13 +106,31 @@ class SwordShieldStationaryEncounter(BaseScript):
             elapsed_ms = (time.time() - t_start) * 1000
             log(f"SR #{sr_count}: battle loaded in {elapsed_ms:.0f} ms")
 
-            if elapsed_ms > self.SHINY_DELAY_MS or not battle_ready:
+            if not battle_ready:
+                log(f"SR #{sr_count}: battle box not seen — resetting")
+                continue
+            if elapsed_ms > self.SHINY_DELAY_MS:
                 log(f"*** SHINY DETECTED! Time: {elapsed_ms:.0f} ms ***")
                 log(f"Total soft resets: {sr_count}")
                 stop_event.wait()
                 break
 
         log("SwSh Stationary Encounter stopped.")
+
+    def _restart_game(self, controller, stop_event) -> bool:
+        """Close and relaunch the game: HOME -> X (close software) -> A (confirm)
+        -> A (launch) -> A (user), then wait SOFT_RESET_WAIT for it to boot.
+        On Switch, SR1 is only the HOME button, so it can't soft-reset by itself."""
+        controller.soft_reset()                       # 'S' = HOME on Switch
+        if not self.wait(self.SR_HOME_WAIT, stop_event): return False
+        controller.press_x()                          # close software
+        if not self.wait(self.SR_X_WAIT, stop_event): return False
+        controller.press_a()                          # confirm close
+        if not self.wait(self.SR_CLOSE_WAIT, stop_event): return False
+        controller.press_a()                          # launch the game
+        if not self.wait(self.SR_LAUNCH_WAIT, stop_event): return False
+        controller.press_a()                          # select user (if asked)
+        return self.wait(self.SOFT_RESET_WAIT, stop_event)
 
     def _wait_for_encounter(self, frame_grabber, stop_event, x, y, w, h) -> bool:
         deadline = time.time() + self.ENCOUNTER_WAIT
