@@ -46,7 +46,11 @@ class FrlgShinyLapras(BaseScript):
     DETECT_1_TOLERANCE = 25
     DETECT_1_TARGET   = [253.0, 209.0, 82.0]  # R, G, B target colour (right-click reference image)
     DETECT_1_PX_THRESHOLD = 10   # min matching pixels to trigger
-    DETECT_1_REGION   = [273, 162, 42, 28]   # x, y, w, h in frame pixels
+    # Where the shiny star appears on the summary screen (just under the gender sign), as
+    # fractions of the calibrated screen: x, y, w, h. Follows the 4-corner calibration, so it
+    # still lines up if the camera is moved. (Was [273, 162, 42, 28] in raw camera pixels,
+    # which only matched the camera position the script was recorded with.)
+    DETECT_1_REGION   = [0.417, 0.170, 0.056, 0.078]
 
     # ── Video panel dimensions (must match VideoPanel constants) ─────────
     _PANEL_W = 640
@@ -177,7 +181,9 @@ class FrlgShinyLapras(BaseScript):
         if not self.wait(self.A_24_DELAY, stop_event): return False
 
         # Step 25: Detect
-        x, y, w, h = self._frame_to_warp(self.DETECT_1_REGION, warp_info)
+        fx, fy, fw, fh = self.DETECT_1_REGION
+        x, y = int(fx * warp_info['out_w']), int(fy * warp_info['out_h'])
+        w, h = max(1, int(fw * warp_info['out_w'])), max(1, int(fh * warp_info['out_h']))
         tr, tg, tb = self.DETECT_1_TARGET
         tol = self.DETECT_1_TOLERANCE
         frame_grabber.set_detect_overlay(*self._warp_to_canvas((x, y, w, h), warp_info))
