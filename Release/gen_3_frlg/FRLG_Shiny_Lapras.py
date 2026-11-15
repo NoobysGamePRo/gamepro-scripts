@@ -50,7 +50,9 @@ class FrlgShinyLapras(BaseScript):
     # fractions of the calibrated screen: x, y, w, h. Follows the 4-corner calibration, so it
     # still lines up if the camera is moved. (Was [273, 162, 42, 28] in raw camera pixels,
     # which only matched the camera position the script was recorded with.)
-    DETECT_1_REGION   = [0.417, 0.170, 0.056, 0.078]
+    # Measured from a real shiny summary screen (Shiny_Images/FRLG Lapras.png): the star sits at
+    # x 0.430-0.453, y 0.237-0.270; this box adds about 1.5 GBA pixels of margin all round.
+    DETECT_1_REGION   = [0.415, 0.215, 0.053, 0.080]
 
     # ── Video panel dimensions (must match VideoPanel constants) ─────────
     _PANEL_W = 640
