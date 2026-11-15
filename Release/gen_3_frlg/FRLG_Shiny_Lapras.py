@@ -62,7 +62,7 @@ class FrlgShinyLapras(BaseScript):
         log('Script started.')
 
         # ── 4-corner screen calibration (every run) ───────────────────────
-        log('Click the four corners of the Switch / Switch 2 screen in any order.')
+        log('Screen corners: confirm the detected outline with ✓, or click the 4 corners of the game picture.')
         warp_info = request_calibration(
             'Click the 4 corners of the Switch / Switch 2 screen', mode='corners'
         )
