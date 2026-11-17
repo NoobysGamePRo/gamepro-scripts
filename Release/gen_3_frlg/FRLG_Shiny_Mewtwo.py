@@ -21,30 +21,16 @@ class FrlgShinyMewtwo(BaseScript):
     DETECT_1_WINDOW    = 6.0
     DETECT_1_INTERVAL  = 0.08
     DETECT_1_TOLERANCE = 25
-    # ── Block 1 ──
-    SOFT_RESET_4_DELAY = 1.81
-    X_5_DELAY = 1.53
-    A_6_DELAY = 1.40
-    RANDOM_7_MIN = 0.50   # random delay range
-    RANDOM_7_MAX = 2.00
-    A_8_DELAY = 0.90
-    RANDOM_9_MIN = 0.50   # random delay range
-    RANDOM_9_MAX = 2.00
-    A_10_DELAY = 6.00
-    RANDOM_11_MIN = 0.50   # random delay range
-    RANDOM_11_MAX = 2.00
-    A_12_DELAY = 5.00
-    RANDOM_13_MIN = 0.50   # random delay range
-    RANDOM_13_MAX = 2.00
-    A_14_DELAY = 3.40
-    RANDOM_15_MIN = 0.50   # random delay range
-    RANDOM_15_MAX = 2.00
-    A_16_DELAY = 2.20
-    RANDOM_17_MIN = 0.50   # random delay range
-    RANDOM_17_MAX = 2.00
-    B_18_DELAY = 1.10
-    RANDOM_19_MIN = 0.50   # random delay range
-    RANDOM_19_MAX = 2.00
+
+    # ── Restart (same as FRLG Shiny Deoxys) ──
+    # HOME, X, A, A, then four A presses and a B, each followed by a random
+    # wait, so every attempt starts the game on a different frame (new RNG seed).
+    RESTART_HOME_DELAY = 1.78
+    RESTART_X_DELAY = 1.28
+    RESTART_A_DELAYS = [2.35, 1.42, 6.93, 5.75, 3.81, 2.18]
+    RESTART_B_DELAY = 3.29
+    RESTART_RANDOM_MIN = 0.20   # random delay range
+    RESTART_RANDOM_MAX = 0.90
 
     # ── Video panel dimensions (must match VideoPanel constants) ─────────
     _PANEL_W = 640
@@ -111,62 +97,8 @@ class FrlgShinyMewtwo(BaseScript):
 
     def _block_block_1(self, controller, frame_grabber, stop_event, log, request_calibration, warp_info):
         """Block: Block 1"""
-        # Step 4: [Home]
-        controller.soft_reset()
-        if not self.wait(self.SOFT_RESET_4_DELAY, stop_event): return False
-
-        # Step 5: [X]
-        controller.press_x()
-        if not self.wait(self.X_5_DELAY, stop_event): return False
-
-        # Step 6: [A]
-        controller.press_a()
-        if not self.wait(self.A_6_DELAY, stop_event): return False
-
-        # Step 7: Random Wait
-        if not self.wait(random.uniform(self.RANDOM_7_MIN, self.RANDOM_7_MAX), stop_event): return False
-
-        # Step 8: [A]
-        controller.press_a()
-        if not self.wait(self.A_8_DELAY, stop_event): return False
-
-        # Step 9: Random Wait
-        if not self.wait(random.uniform(self.RANDOM_9_MIN, self.RANDOM_9_MAX), stop_event): return False
-
-        # Step 10: [A]
-        controller.press_a()
-        if not self.wait(self.A_10_DELAY, stop_event): return False
-
-        # Step 11: Random Wait
-        if not self.wait(random.uniform(self.RANDOM_11_MIN, self.RANDOM_11_MAX), stop_event): return False
-
-        # Step 12: [A]
-        controller.press_a()
-        if not self.wait(self.A_12_DELAY, stop_event): return False
-
-        # Step 13: Random Wait
-        if not self.wait(random.uniform(self.RANDOM_13_MIN, self.RANDOM_13_MAX), stop_event): return False
-
-        # Step 14: [A]
-        controller.press_a()
-        if not self.wait(self.A_14_DELAY, stop_event): return False
-
-        # Step 15: Random Wait
-        if not self.wait(random.uniform(self.RANDOM_15_MIN, self.RANDOM_15_MAX), stop_event): return False
-
-        # Step 16: [A]
-        controller.press_a()
-        if not self.wait(self.A_16_DELAY, stop_event): return False
-
-        # Step 17: Random Wait
-        if not self.wait(random.uniform(self.RANDOM_17_MIN, self.RANDOM_17_MAX), stop_event): return False
-
-        # Step 18: [B]
-        controller.press_b()
-        if not self.wait(self.B_18_DELAY, stop_event): return False
-
-        # Step 19: Random Wait
-        if not self.wait(random.uniform(self.RANDOM_19_MIN, self.RANDOM_19_MAX), stop_event): return False
+        # Restart the game (same timings and random waits as FRLG Shiny Deoxys)
+        if not self._restart_game(controller, stop_event): return False
 
         return True
 
@@ -254,3 +186,22 @@ class FrlgShinyMewtwo(BaseScript):
         cw = max(1, int(w * scale))
         ch = max(1, int(h * scale))
         return cx, cy, cw, ch
+
+    def _restart_game(self, controller, stop_event):
+        """Close and relaunch the game, with the same timings and random waits
+        as FRLG Shiny Deoxys. Returns False if Stop was pressed."""
+        def rand_wait():
+            return self.wait(random.uniform(self.RESTART_RANDOM_MIN, self.RESTART_RANDOM_MAX), stop_event)
+
+        controller.soft_reset()                         # HOME
+        if not self.wait(self.RESTART_HOME_DELAY, stop_event): return False
+        controller.press_x()                            # close the game
+        if not self.wait(self.RESTART_X_DELAY, stop_event): return False
+        for i, delay in enumerate(self.RESTART_A_DELAYS):
+            if i >= 2 and not rand_wait(): return False
+            controller.press_a()
+            if not self.wait(delay, stop_event): return False
+        if not rand_wait(): return False
+        controller.press_b()                            # skip the recap
+        if not self.wait(self.RESTART_B_DELAY, stop_event): return False
+        return rand_wait()
