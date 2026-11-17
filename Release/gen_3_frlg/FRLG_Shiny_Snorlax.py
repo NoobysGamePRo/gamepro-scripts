@@ -23,18 +23,16 @@ class FrlgShinySnorlax(BaseScript):
     DETECT_1_WINDOW    = 6.0
     DETECT_1_INTERVAL  = 0.08
     DETECT_1_TOLERANCE = 15
-    # ── Block 1 ──
-    SOFT_RESET_6_DELAY = 1.74
-    X_7_DELAY = 1.38
-    A_8_DELAY = 2.30
-    A_9_DELAY = 1.40
-    A_10_DELAY = 6.85
-    RANDOM_11_MIN = 0.00   # random delay range
-    RANDOM_11_MAX = 1.00
-    A_12_DELAY = 5.92
-    A_13_DELAY = 4.12
-    A_14_DELAY = 2.03
-    B_15_DELAY = 2.10
+
+    # ── Restart (same as FRLG Shiny Deoxys) ──
+    # HOME, X, A, A, then four A presses and a B, each followed by a random
+    # wait, so every attempt starts the game on a different frame (new RNG seed).
+    RESTART_HOME_DELAY = 1.78
+    RESTART_X_DELAY = 1.28
+    RESTART_A_DELAYS = [2.35, 1.42, 6.93, 5.75, 3.81, 2.18]
+    RESTART_B_DELAY = 3.29
+    RESTART_RANDOM_MIN = 0.20   # random delay range
+    RESTART_RANDOM_MAX = 0.90
 
     # ── Video panel dimensions (must match VideoPanel constants) ─────────
     _PANEL_W = 640
@@ -109,44 +107,8 @@ class FrlgShinySnorlax(BaseScript):
 
     def _block_block_1(self, controller, frame_grabber, stop_event, log, request_calibration, warp_info):
         """Block: Block 1"""
-        # Step 6: [Home]
-        controller.soft_reset()
-        if not self.wait(self.SOFT_RESET_6_DELAY, stop_event): return False
-
-        # Step 7: [X]
-        controller.press_x()
-        if not self.wait(self.X_7_DELAY, stop_event): return False
-
-        # Step 8: [A]
-        controller.press_a()
-        if not self.wait(self.A_8_DELAY, stop_event): return False
-
-        # Step 9: [A]
-        controller.press_a()
-        if not self.wait(self.A_9_DELAY, stop_event): return False
-
-        # Step 10: [A]
-        controller.press_a()
-        if not self.wait(self.A_10_DELAY, stop_event): return False
-
-        # Step 11: Random Wait
-        if not self.wait(random.uniform(self.RANDOM_11_MIN, self.RANDOM_11_MAX), stop_event): return False
-
-        # Step 12: [A]
-        controller.press_a()
-        if not self.wait(self.A_12_DELAY, stop_event): return False
-
-        # Step 13: [A]
-        controller.press_a()
-        if not self.wait(self.A_13_DELAY, stop_event): return False
-
-        # Step 14: [A]
-        controller.press_a()
-        if not self.wait(self.A_14_DELAY, stop_event): return False
-
-        # Step 15: [B]
-        controller.press_b()
-        if not self.wait(self.B_15_DELAY, stop_event): return False
+        # Restart the game (same timings and random waits as FRLG Shiny Deoxys)
+        if not self._restart_game(controller, stop_event): return False
 
         return True
 
@@ -220,3 +182,22 @@ class FrlgShinySnorlax(BaseScript):
         cw = max(1, int(w * scale))
         ch = max(1, int(h * scale))
         return cx, cy, cw, ch
+
+    def _restart_game(self, controller, stop_event):
+        """Close and relaunch the game, with the same timings and random waits
+        as FRLG Shiny Deoxys. Returns False if Stop was pressed."""
+        def rand_wait():
+            return self.wait(random.uniform(self.RESTART_RANDOM_MIN, self.RESTART_RANDOM_MAX), stop_event)
+
+        controller.soft_reset()                         # HOME
+        if not self.wait(self.RESTART_HOME_DELAY, stop_event): return False
+        controller.press_x()                            # close the game
+        if not self.wait(self.RESTART_X_DELAY, stop_event): return False
+        for i, delay in enumerate(self.RESTART_A_DELAYS):
+            if i >= 2 and not rand_wait(): return False
+            controller.press_a()
+            if not self.wait(delay, stop_event): return False
+        if not rand_wait(): return False
+        controller.press_b()                            # skip the recap
+        if not self.wait(self.RESTART_B_DELAY, stop_event): return False
+        return rand_wait()

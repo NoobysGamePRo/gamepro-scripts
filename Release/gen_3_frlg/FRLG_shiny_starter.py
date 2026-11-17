@@ -8,6 +8,7 @@ Adjust the timing constants at the top of the class to tune the script.
 import json
 import os
 import sys
+import random
 import time
 
 from scripts.base_script import BaseScript
@@ -18,15 +19,6 @@ class FrlgShinyStarter(BaseScript):
     DESCRIPTION = "Soft-resets for a shiny FRLG starter (Switch / Switch 2, NSO GBA)."
 
     # ── Timing constants (seconds) ──────────────────────────────────────
-    SOFT_RESET_1_DELAY = 1.63
-    X_2_DELAY = 1.16
-    A_3_DELAY = 1.84
-    A_4_DELAY = 1.23
-    A_5_DELAY = 6.71
-    A_6_DELAY = 4.76
-    A_7_DELAY = 3.35
-    A_8_DELAY = 2.75
-    B_9_DELAY = 3.49
     A_10_DELAY = 1.88
     A_11_DELAY = 1.92
     A_12_DELAY = 2.79
@@ -42,6 +34,16 @@ class FrlgShinyStarter(BaseScript):
     DETECT_1_TOLERANCE = 30
     DETECT_1_TARGET   = [255.0, 216.0, 95.0]  # R, G, B target colour (right-click reference image)
     DETECT_1_PX_THRESHOLD = 10   # min matching pixels to trigger
+
+    # ── Restart (same as FRLG Shiny Deoxys) ──
+    # HOME, X, A, A, then four A presses and a B, each followed by a random
+    # wait, so every attempt starts the game on a different frame (new RNG seed).
+    RESTART_HOME_DELAY = 1.78
+    RESTART_X_DELAY = 1.28
+    RESTART_A_DELAYS = [2.35, 1.42, 6.93, 5.75, 3.81, 2.18]
+    RESTART_B_DELAY = 3.29
+    RESTART_RANDOM_MIN = 0.20   # random delay range
+    RESTART_RANDOM_MAX = 0.90
 
     # ── Video panel dimensions (must match VideoPanel constants) ─────────
     _PANEL_W = 640
@@ -68,41 +70,8 @@ class FrlgShinyStarter(BaseScript):
         count = 0
 
         while not stop_event.is_set():
-            # Step 1: [Home]
-            controller.soft_reset()
-            if not self.wait(self.SOFT_RESET_1_DELAY, stop_event): break
-
-            # Step 2: [X]
-            controller.press_x()
-            if not self.wait(self.X_2_DELAY, stop_event): break
-
-            # Step 3: [A]
-            controller.press_a()
-            if not self.wait(self.A_3_DELAY, stop_event): break
-
-            # Step 4: [A]
-            controller.press_a()
-            if not self.wait(self.A_4_DELAY, stop_event): break
-
-            # Step 5: [A]
-            controller.press_a()
-            if not self.wait(self.A_5_DELAY, stop_event): break
-
-            # Step 6: [A]
-            controller.press_a()
-            if not self.wait(self.A_6_DELAY, stop_event): break
-
-            # Step 7: [A]
-            controller.press_a()
-            if not self.wait(self.A_7_DELAY, stop_event): break
-
-            # Step 8: [A]
-            controller.press_a()
-            if not self.wait(self.A_8_DELAY, stop_event): break
-
-            # Step 9: [B]
-            controller.press_b()
-            if not self.wait(self.B_9_DELAY, stop_event): break
+            # Restart the game (same timings and random waits as FRLG Shiny Deoxys)
+            if not self._restart_game(controller, stop_event): break
 
             # Step 10: [A]
             controller.press_a()
@@ -259,3 +228,22 @@ class FrlgShinyStarter(BaseScript):
                             return n2
             time.sleep(interval)
         return None
+
+    def _restart_game(self, controller, stop_event):
+        """Close and relaunch the game, with the same timings and random waits
+        as FRLG Shiny Deoxys. Returns False if Stop was pressed."""
+        def rand_wait():
+            return self.wait(random.uniform(self.RESTART_RANDOM_MIN, self.RESTART_RANDOM_MAX), stop_event)
+
+        controller.soft_reset()                         # HOME
+        if not self.wait(self.RESTART_HOME_DELAY, stop_event): return False
+        controller.press_x()                            # close the game
+        if not self.wait(self.RESTART_X_DELAY, stop_event): return False
+        for i, delay in enumerate(self.RESTART_A_DELAYS):
+            if i >= 2 and not rand_wait(): return False
+            controller.press_a()
+            if not self.wait(delay, stop_event): return False
+        if not rand_wait(): return False
+        controller.press_b()                            # skip the recap
+        if not self.wait(self.RESTART_B_DELAY, stop_event): return False
+        return rand_wait()
